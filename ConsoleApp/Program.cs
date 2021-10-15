@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json;
 using RabbitMQ.Client;
 using System;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -13,56 +14,90 @@ namespace ConsoleApp
     {
         static void Main(string[] args)
         {
-            var factory = new ConnectionFactory() { HostName = "localhost", UserName = "guest", Password = "guest" };
+            var factory = new ConnectionFactory() { HostName = "localhost", UserName = "kikrmq", Password = "Prodoe45!Queue" };
             using (var connection = factory.CreateConnection())
             using (var channel = connection.CreateModel())
             {
-                channel.QueueDeclare(
-                    queue: "Core",
-                    durable: true,
-                    exclusive: false,
-                    autoDelete: false,
-                    arguments: null
-                );
-                string filePath = AppDomain.CurrentDomain.BaseDirectory + "phone_number_csv.csv";
+                string filePath = AppDomain.CurrentDomain.BaseDirectory + "final_ean.csv";
                 CsvParserOptions csvParserOptions = new CsvParserOptions(true, ',');
                 CsvSmsMapping csvMapper = new CsvSmsMapping();
-                CsvParser<SendSmsEvent> csvParser = new CsvParser<SendSmsEvent>(csvParserOptions, csvMapper);
+                CsvParser<EanStartDate> csvParser = new CsvParser<EanStartDate>(csvParserOptions, csvMapper);
                 var result = csvParser.ReadFromFile(filePath, Encoding.ASCII).ToList();
                 foreach (var details in result)
                 {
-                    Console.WriteLine(details.Result.PhoneNumberTo + " " + details.Result.Message);
-                    SendSmsEvent sendSmsEvent = new SendSmsEvent
-                    {
-                        PhoneNumberTo = details.Result.PhoneNumberTo,
-                        Message = details.Result.Message
-                    };
-                    string message = JsonConvert.SerializeObject(sendSmsEvent);
-                    var body = Encoding.UTF8.GetBytes(message);
-                    channel.BasicPublish(
-                        exchange: "kikker_event_bus",
-                        routingKey: "SendSmsEvent",
-                        basicProperties: null,
-                        body: body
-                    );
-                    Thread.Sleep(1000);
+                    string ean = details.Result.Ean;
+                    DateTime startDate = PraseDate(details.Result.StartDate);
+                    DateTime endDate = new DateTime(2021, 10, 1);
+                    WriteFile(ean);
+                    PushEvent(startDate, endDate, ean, channel);
                 }
             }
         }
 
-        private class CsvSmsMapping : CsvMapping<SendSmsEvent>
+        private static DateTime PraseDate(string date)
         {
-            public CsvSmsMapping() : base()
+            String[] dateAndTime = date.Split(" ");
+            String dateOnly = dateAndTime[0];
+            String[] dayMonthYear = dateOnly.Split("/");
+            int year = int.Parse(dayMonthYear[2]);
+            int month = int.Parse(dayMonthYear[1]);
+            int day = int.Parse(dayMonthYear[0]);
+            return new DateTime(year, month, day);
+
+        }
+        private static void PushEvent(DateTime startDate, DateTime endDate, String ean , IModel channel)
+        {
+            DateTime currentDate = startDate;
+            while(currentDate <= endDate)
             {
-                MapProperty(0, x => x.PhoneNumberTo);
-                MapProperty(1, x => x.Message);
+                P4UsageToCoreEvent eanEvent = new P4UsageToCoreEvent
+                {
+                    EanId = ean,
+                    QueryDate = currentDate,
+                    QueryReason = "DAY"
+                };
+                string message = JsonConvert.SerializeObject(eanEvent);
+                Console.WriteLine($"push {message}");
+                var body = Encoding.UTF8.GetBytes(message);
+                channel.BasicPublish(
+                    exchange: "kikker_event_bus",
+                    routingKey: "P4UsageToCoreEvent",
+                    basicProperties: null,
+                    body: body
+                );
+                currentDate = currentDate.AddDays(1);
+                Thread.Sleep(400);
             }
         }
 
-        public class SendSmsEvent
+        private static void WriteFile(String message)
         {
-            public string PhoneNumberTo { get; set; }
-            public string Message { get; set; }
+            using (StreamWriter writer = System.IO.File.AppendText("logfile.txt"))
+            {
+                writer.WriteLine(message);
+            }
+        }
+
+        private class CsvSmsMapping : CsvMapping<EanStartDate>
+        {
+            public CsvSmsMapping() : base()
+            {
+                MapProperty(0, x => x.Ean);
+                MapProperty(1, x => x.StartDate);
+            }
+        }
+
+        public class EanStartDate
+        {
+            public string Ean { get; set; }
+            public string StartDate { get; set; }
+        }
+
+        public class P4UsageToCoreEvent
+        {
+            public string EanId { get; set; }
+            public DateTime QueryDate { get; set; }
+            public string QueryReason { get; set; }
         }
     }
 }
