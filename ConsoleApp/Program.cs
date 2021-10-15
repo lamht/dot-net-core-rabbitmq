@@ -14,7 +14,7 @@ namespace ConsoleApp
     {
         static void Main(string[] args)
         {
-            var factory = new ConnectionFactory() { HostName = "localhost", UserName = "kikrmq", Password = "Prodoe45!Queue" };
+            var factory = new ConnectionFactory() { HostName = "localhost", UserName = "guest", Password = "guest" };
             using (var connection = factory.CreateConnection())
             using (var channel = connection.CreateModel())
             {
